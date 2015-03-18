@@ -21,6 +21,7 @@
 
 ;; patch cljs.core/UUID IEquiv
 
+(enable-console-print!)
 (extend-type UUID
   IEquiv
   (-equiv [this other]
@@ -72,19 +73,42 @@
       (aset a k v)))
   a)
 
-(deftype ^:no-doc MapBuilder []
-  Object
-  (init [_ node] (transient {}))
-  (add [_ m k v node] (assoc! m k v))
-  (finalize [_ m node] (persistent! m))
-  (fromArray [_ arr node] (cljs.core/PersistentArrayMap.fromArray arr true true)))
 
-(deftype ^:no-doc VectorBuilder []
+(defn cache-wrapper
+  "wraps a function in a cache entry"
+  [cache func]
+  (fn [v] 
+    (let [result (func v)
+          out-cache (:out-cache cache)
+          values (:values cache)]
+      (when-not (contains? @values result)
+        (swap! out-cache #(assoc % (count %) result))
+        (swap! values conj result))
+      result)))
+
+(deftype ^:no-doc MapBuilder [cache]
+  Object
+  (init [_ node] 
+        (transient {}))
+  (add [_ m k v node] 
+       (assoc! m k v))
+  (finalize [_ m node] (persistent! m))
+  (fromArray [_ arr node] ((cache-wrapper 
+                             cache
+                             #(cljs.core/PersistentArrayMap.fromArray 
+                                % true true))
+                           arr)))
+
+(deftype ^:no-doc VectorBuilder [cache]
   Object
   (init [_ node] (transient []))
   (add [_ v x node] (conj! v x))
   (finalize [_ v node] (persistent! v))
-  (fromArray [_ arr node] (cljs.core/PersistentVector.fromArray arr true)))
+  (fromArray [_ arr node] ((cache-wrapper 
+                             cache
+                             #(cljs.core/PersistentVector.fromArray 
+                                % true)) 
+                           arr)))
 
 (defn reader
   "Return a transit reader. type may be either :json or :json-verbose.
@@ -92,25 +116,31 @@
    of :handlers should be map from tag to a decoder function which returns
    then in-memory representation of the semantic transit value."
   ([type] (reader type nil))
-  ([type opts]
+  ([type opts] (reader type opts {:out-cache (atom {})
+                                  :values (atom #{})}))
+  ([type opts cache]
      (t/reader (name type)
        (opts-merge
          #js {:handlers
               (clj->js
                 (merge
-                  {"$" (fn [v] (symbol v))
-                   ":" (fn [v] (keyword v))
-                   "set" (fn [v] (into #{} v))
-                   "list" (fn [v] (into () (.reverse v)))
-                   "cmap" (fn [v] 
-                            (loop [i 0 ret (transient {})]
-                              (if (< i (alength v))
-                                (recur (+ i 2)
-                                  (assoc! ret (aget v i) (aget v (inc i))))
-                                (persistent! ret))))}
+                  {"$" (cache-wrapper cache (fn [v] (symbol v)))
+                   ":" (cache-wrapper cache (fn [v] 
+                                              (keyword v)))
+                   "set" (cache-wrapper cache (fn [v] (into #{} v))) 
+                   "list" (cache-wrapper cache (fn [v] (into () (.reverse v))))
+                   "cmap" (cache-wrapper cache 
+                            (fn [v] 
+                              (loop [i 0 ret (transient {})]
+                                (if (< i (alength v))
+                                  (recur (+ i 2)
+                                    (assoc! ret (aget v i) (aget v (inc i))))
+                                  (persistent! ret)))))
+                   "cache" (fn [v] 
+                             (get @(:out-cache cache) v))}
                   (:handlers opts)))
-              :mapBuilder (MapBuilder.)
-              :arrayBuilder (VectorBuilder.)
+              :mapBuilder (MapBuilder. cache)
+              :arrayBuilder (VectorBuilder. cache)
               :prefersStrings false}
          (clj->js (dissoc opts :handlers))))))
 

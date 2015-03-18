@@ -42,6 +42,15 @@
     (is (= (t/read r "[1,2,3]") [1 2 3]))
     (is (= (t/read r "[\"~#set\",[1,2,3]]") #{1 2 3}))
     (is (= (t/read r "[\"~#list\",[1,2,3]]") '(1 2 3)))
+    (is (= (t/read (t/reader :json) "[[\"~#list\",[1,2,3]],[\"~#cache\", 0]]") 
+           ['(1 2 3) '(1 2 3)]))
+    (is (= (t/read (t/reader :json) "[{\"~:foo\":\"bar\"},[\"~#cache\", 1]]") 
+           [{:foo "bar"} {:foo "bar"}]))
+    (is (= (t/read (t/reader :json) "[{\"~:foo\":\"bar\"},{ \"~:foo\": 
+                                    [\"~#cache\", 1],\"~:bar\":[\"~#cache\", 1]}]") 
+           [{:foo "bar"} {:foo {:foo "bar"} :bar {:foo "bar"}}]))
+        (is (= (t/read (t/reader :json) "[[\"foo\",\"bar\"],[\"~#cache\", 0]]") 
+           [["foo" "bar"] ["foo" "bar"]]))
     (is (= (.valueOf (t/read r "{\"~#'\":\"~t2014-05-07T14:02:01.791Z\"}"))
                (.valueOf (js/Date. 1399471321791))))))
 
@@ -157,5 +166,7 @@
 
 (defn -main [& args]
   (run-tests))
+
+(run-tests)
 
 (set! *main-cli-fn* -main)
