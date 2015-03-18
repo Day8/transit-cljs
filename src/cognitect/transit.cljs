@@ -112,37 +112,37 @@
 
 (defn reader
   "Return a transit reader. type may be either :json or :json-verbose.
-   opts may be a map optionally containing a :handlers entry. The value
-   of :handlers should be map from tag to a decoder function which returns
-   then in-memory representation of the semantic transit value."
+  opts may be a map optionally containing a :handlers entry. The value
+  of :handlers should be map from tag to a decoder function which returns
+  then in-memory representation of the semantic transit value."
   ([type] (reader type nil))
   ([type opts] (reader type opts {:out-cache (atom {})
                                   :values (atom #{})}))
   ([type opts cache]
+   (let [handlers {"$"  (fn [v] (symbol v))
+                   ":"  (fn [v] (keyword v))
+                   "set"  (fn [v] (into #{} v)) 
+                   "list"  (fn [v] (into () (.reverse v)))
+                   "cmap"  (fn [v] 
+                             (loop [i 0 ret (transient {})]
+                               (if (< i (alength v))
+                                 (recur (+ i 2)
+                                        (assoc! ret (aget v i) (aget v (inc i))))
+                                 (persistent! ret))))}
+         handlers (merge handlers (:handlers opts))
+         ; wrap the handler functions in a cache
+         handlers (into {} (for [[k v] handlers]
+                             [k, (cache-wrapper cache v)]))
+         handlers (merge handlers {"cache" (fn [v] 
+                                             (get @(:out-cache cache) v))})]
      (t/reader (name type)
-       (opts-merge
-         #js {:handlers
-              (clj->js
-                (merge
-                  {"$" (cache-wrapper cache (fn [v] (symbol v)))
-                   ":" (cache-wrapper cache (fn [v] 
-                                              (keyword v)))
-                   "set" (cache-wrapper cache (fn [v] (into #{} v))) 
-                   "list" (cache-wrapper cache (fn [v] (into () (.reverse v))))
-                   "cmap" (cache-wrapper cache 
-                            (fn [v] 
-                              (loop [i 0 ret (transient {})]
-                                (if (< i (alength v))
-                                  (recur (+ i 2)
-                                    (assoc! ret (aget v i) (aget v (inc i))))
-                                  (persistent! ret)))))
-                   "cache" (fn [v] 
-                             (get @(:out-cache cache) v))}
-                  (:handlers opts)))
-              :mapBuilder (MapBuilder. cache)
-              :arrayBuilder (VectorBuilder. cache)
-              :prefersStrings false}
-         (clj->js (dissoc opts :handlers))))))
+               (opts-merge
+                 #js {:handlers
+                      (clj->js handlers)
+                      :mapBuilder (MapBuilder. cache)
+                      :arrayBuilder (VectorBuilder. cache)
+                      :prefersStrings false}
+                 (clj->js (dissoc opts :handlers)))))))
 
 (defn read
   "Read a transit encoded string into ClojureScript values given a 
